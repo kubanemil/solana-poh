@@ -17,8 +17,8 @@ class Poh:
     def __init__(self, hash_: bytes, hashes_per_tick: int = None, tick_number: int = 0):
         self.hash_: bytes = hash_
         self.num_hashes: int = 0
-        self.hashes_per_tick: int = hashes_per_tick or LOW_POWER_MODE
-        self.remaining_hashes: int = hashes_per_tick or LOW_POWER_MODE
+        self.hashes_per_tick: int = hashes_per_tick
+        self.remaining_hashes: int = hashes_per_tick
         self.tick_number: int = tick_number
         self.slot_start_time: float = time.time()
 
@@ -59,7 +59,7 @@ class Poh:
         self.num_hashes += 1
         self.remaining_hashes -= 1
 
-        if self.hashes_per_tick != LOW_POWER_MODE and self.remaining_hashes != 0:
+        if self.remaining_hashes != 0:
             return None
 
         num_hashes = self.num_hashes

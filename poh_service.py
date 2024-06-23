@@ -14,7 +14,7 @@ class PohService:
         self,
         poh_recorder: PohRecorder,
         hashes_per_batch: int,
-        record_receiver,
+        record_receiver: KafkaConsumer,
     ):
         adjustment_per_tick = TARGET_SLOT_ADJUSTMENT_NS / TICKS_PER_SLOT
         target_ns_per_tick = TARGET_TICK_DURATION_NS - adjustment_per_tick
@@ -29,11 +29,13 @@ class PohService:
                 hashes_per_batch,
                 target_ns_per_tick,
             )
-            # print(should_tick, next_record)
+            if next_record:
+                print(f"mixin: {next_record.mixin.hex()}")
+
             if should_tick:
                 poh_recorder.tick()
 
-                if time.time() - start > 30:
+                if time.time() - start > 300:
                     break
 
     def record_or_hash(
@@ -84,7 +86,13 @@ def get_record(record_receiver: KafkaConsumer) -> Record | None:
 
 
 if __name__ == "__main__":
+    from hashlib import sha256
+
+    init_hash = sha256(b"initial").digest()
+    hashes_per_tick = 10000
+    hashes_per_batch = 1000
+
     poh_service = PohService()
-    poh_recorder = PohRecorder(0, b"init", 10_000)
+    poh_recorder = PohRecorder(0, init_hash, hashes_per_tick)
     record_receiver = KafkaConsumer("record", bootstrap_servers="localhost:9092")
-    poh_service.tick_producer(poh_recorder, 200, record_receiver)
+    poh_service.tick_producer(poh_recorder, hashes_per_batch, record_receiver)
