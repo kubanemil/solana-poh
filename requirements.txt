@@ -1,1 +1,2 @@
-merkly
+pymerkle
+kafka-python
