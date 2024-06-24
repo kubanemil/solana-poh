@@ -1,0 +1,7 @@
+/venv
+/__pycache__
+/.ruff_cache
+/.git
+docker-compose.yml
+Dockerfile.main
+Dockerfile.tx_generator

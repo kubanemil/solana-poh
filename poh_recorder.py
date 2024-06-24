@@ -1,4 +1,5 @@
 import json
+import logging
 
 from entry import Entry, Transaction
 from poh import Poh
@@ -65,10 +66,9 @@ class PohRecorder:
 
         if poh_entry:
             self.tick_height += 1
-            print(f"tick height: {self.tick_height}")
-            print(f"tick hash: {poh_entry.hash.hex()}")
-            print(f"num hashes between ticks: {poh_entry.num_hashes}")
-            print()
+            logging.info(f"tick height: {self.tick_height}")
+            logging.info(f"tick hash: {poh_entry.hash.hex()}")
+            logging.info(f"num hashes between ticks: {poh_entry.num_hashes} \n")
 
             entry = Entry(poh_entry.num_hashes, poh_entry.hash, [])
             self.tick_cache.append((entry, self.tick_height))

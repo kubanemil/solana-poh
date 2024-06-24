@@ -20,3 +20,25 @@ services:
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+
+  main_service:
+    build:
+      context: .
+      dockerfile: Dockerfile.main
+    image: main_service_image:latest
+    environment:
+      - KAFKA_SERVER=kafka:9093
+      - WAIT_TIME=5
+    depends_on:
+      - kafka
+
+  tx_generator_service:
+    build:
+      context: .
+      dockerfile: Dockerfile.tx_generator
+    image: tx_generator_service_image:latest
+    environment:
+      - KAFKA_SERVER=kafka:9093
+      - WAIT_TIME=5
+    depends_on:
+      - kafka
