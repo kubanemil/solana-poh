@@ -3,10 +3,10 @@ import json
 from entry import Entry, Transaction
 from poh import Poh
 
+
 class Bank:
     def __init__(self):
         self.bank = []
-        self.transaction_index: int | None = 0
 
 
 class Record:
@@ -35,12 +35,9 @@ class Record:
         return f"Record(mixin={self.mixin.hex()}, transactions={self.transactions}, slot={self.slot})"
 
 
-
 class PohRecorder:
     def __init__(self, tick_height: int, last_entry_hash: bytes, hashes_per_tick: int):
-        self.poh = Poh(
-            hash_=last_entry_hash, hashes_per_tick=hashes_per_tick, tick_number=0
-        )
+        self.poh = Poh(hash_=last_entry_hash, hashes_per_tick=hashes_per_tick)
         self.bank: Bank = Bank()
         self.ticks_from_record = 0
         self.tick_height = tick_height
@@ -58,7 +55,7 @@ class PohRecorder:
                 entry = Entry(poh_entry.num_hashes, poh_entry.hash, transactions)
                 self.bank.bank.append(
                     entry
-                )  # in reality sends to bank, via thread send()
+                )  # in original code sends to bank, via thread .sender
                 return
             self.ticks_from_record += 1
             self.tick()

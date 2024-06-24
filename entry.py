@@ -1,12 +1,6 @@
 import json
-from enum import Enum
 
 from pymerkle import InmemoryTree as MerkleTree
-
-
-class EntryType(Enum):
-    TRANSACTIONS = "transactions"
-    TICK = "tick"
 
 
 class Transaction:
