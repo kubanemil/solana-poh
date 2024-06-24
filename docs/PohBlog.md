@@ -39,7 +39,7 @@ pub struct Poh {
 }
 ```
 
-`Poh::new()` initializes the PoH process with a given initial hash, the number of hashes between ticks, and a tick number to start with.
+`Poh::new()` initializes the PoH state with a given initial hash, the number of hashes between ticks, and a tick number to start with.
 
 `solana_entry::poh::PohEntry` struct represents a single PoH entry. It only stores the ‘hash distance’ between the current and previous entry and the resulting hash value of the current entry.
 
@@ -76,9 +76,7 @@ It ensures that each transaction and tick is accurately documented, providing a 
 `solana_entry::entry::Entry` struct used by PohRecorder equivalent to `solana_entry::poh::PohEntry` but has an additional field to store transactions. Those entries are sent to the bank.
 ```rust
 pub struct Entry {
-    /// The number of hashes since the previous Entry ID.
     pub num_hashes: u64,
-    /// The SHA-256 hash `num_hashes` after the previous Entry ID.
     pub hash: Hash,
     pub transactions: Vec<VersionedTransaction>,
 }
@@ -95,7 +93,7 @@ pub struct WorkingBank {
 }
 ```
 
-`WorkingBank` struct is essential for managing the state and progress of a bank within the PohRecorder. PohRecorder is responsible for recording transactions in real-time as they happen into the bank and sending them to the ledger’s entry channel. Each bank's operations are accurately recorded and timestamped within the recorder.
+`WorkingBank` struct is essential for managing the state and progress of a bank within the `PohRecorder`. `PohRecorder` is responsible for recording transactions in real-time as they happen into the bank and sending them to the ledger’s entry channel. Each bank's operations are accurately recorded and timestamped within the recorder.
 
 `Record` struct represents a record containing a mixin (transaction hashes), a list of transactions, a slot number, and a sender to send record results.
 ```rust
@@ -103,7 +101,7 @@ pub struct Record {
     pub mixin: Hash,
     pub transactions: Vec<VersionedTransaction>,
     pub slot: Slot,
-    …
+    pub sender: Sender,
 }
 ```
 
@@ -121,6 +119,7 @@ let record_mixin_res = poh.record(mixin)
 If successful, it creates an `Entry` and sends it to the bank:
 
 ```rust
+...
 if let Some(poh_entry) = record_mixin_res {
     let send_entry_res =
         {
@@ -132,18 +131,22 @@ if let Some(poh_entry) = record_mixin_res {
             let bank_clone = self.working_bank.bank.clone();
             self.sender.send((bank_clone, (entry, self.tick_height)))
         }
+    return Ok()
 }
+...
 ```
-
+Then exits the loop.
 If the last hash is reserved for a tick, it triggers `PohRecorder::tick()`, and tries to re-record:
 
 ```rust
+...
 loop {
 
     // recording logic
 
     self.tick();
 }
+...
 ```
 
 ### PohRecorder::tick()
@@ -154,18 +157,18 @@ The method generates a new tick by invoking the `PoH::tick()`:
 pub fn tick(&mut self) {
     let (poh_entry, target_time) =
         {
-            let mut poh_l = self.poh.lock().unwrap();
-		    
             // ticks
-            let poh_entry = poh_l.tick();
+            let poh_entry = poh.tick();
 
             (poh_entry, target_time)
         }
+}
 ```
 
 It updates the tick height, then creates an `Entry` for the tick and adds it to the tick cache:
 
 ```rust
+...
 if let Some(poh_entry) = poh_entry {
     self.tick_height += 1;
 
@@ -178,6 +181,7 @@ if let Some(poh_entry) = poh_entry {
         self.tick_height,
     ));
 }
+...
 ```
 
 In addition to these methods, there are also getter methods, methods to interact with a bank, make slot-related calculations, resetting, reporting, etc. 
@@ -193,18 +197,19 @@ It tries to retrieve new transactions if present, and based on this uses PohReco
 Starts a loop that continuously processes records and generates entries.
 ```rust
 fn tick_producer(...) {
-        loop {
-            let should_tick = Self::record_or_hash(...);
-            if should_tick {
-                poh_recorder.tick();
-            }
+    loop {
+        let should_tick = Self::record_or_hash(...);
+        if should_tick {
+            poh_recorder.tick();
         }
     }
+}
 ```
 
 #### PohService::record_or_hash()
 The method checks if a new record is available. If yes, it is recorded using `PohRecorder::record()`:
 ```rust
+...
 Some(mut record) => {
     let res = poh_recorder.record(
         record.slot,
@@ -212,11 +217,13 @@ Some(mut record) => {
         record.transactions,
     );
 }
+...
 ```
 
 If no record is available, the method checks if a tick should be generated and signals that, otherwise it will look for a new record:
 
 ```rust
+...
 None => {
     let should_tick = poh.hash(hashes_per_batch);
     if should_tick {
@@ -228,10 +235,8 @@ None => {
         return false;
     }
 }   
+...
 ```
-
-
-Also, you can set Low-power mode for PoH to run in PohService settings.
 
 
 ## Summary
