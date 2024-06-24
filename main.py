@@ -1,11 +1,12 @@
-from hashlib import sha256
-from poh_service import PohService
-from poh_recorder import PohRecorder
-from kafka import KafkaConsumer
-from time import sleep
-import os
 import logging
+import os
+from hashlib import sha256
+from time import sleep
 
+from kafka import KafkaConsumer
+
+from poh_recorder import PohRecorder
+from poh_service import PohService
 
 sleep(int(os.environ["WAIT_TIME"]))
 logging.basicConfig(level=logging.INFO)

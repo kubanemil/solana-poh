@@ -1,7 +1,7 @@
+import logging
+import os
 from random import randint
 from time import sleep
-import os
-import logging
 
 from kafka import KafkaProducer
 

@@ -1,5 +1,7 @@
-from kafka import KafkaConsumer
 import logging
+
+from kafka import KafkaConsumer
+
 from poh_recorder import PohRecorder, Record
 
 RECEIVER_TIMEOUT_MS = 10
