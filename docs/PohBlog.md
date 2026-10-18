@@ -1,4 +1,4 @@
-_Updated in October 2026: the code follows Agave, the validator Anza took over from Solana Labs in 2024, and the numbers follow mainnet today._
+_Updated in October 2026 for Agave and today's mainnet numbers._
 
 ## What is Proof-of-History and how it works
 
@@ -10,10 +10,10 @@ Given the rapid rate at which new hashes are generated, it is impractical to sto
 ### Entries and Ticks
 An entry in PoH can either include transaction data or serve purely as a time marker. Entries that do not include transaction mixins and act solely as time points are called ticks.
 
-Solana started with 12,500 hashes between ticks: 64 ticks in a 400 ms slot, at 2 million hashes a second. Feature gates have since raised the target to 10 million hashes a second and cut slots to 200 ms, so mainnet now generates 31,250 hashes between ticks.
+On mainnet today, 31,250 hashes are generated between ticks. It was 12,500 until feature gates raised the hash rate and cut slots to 200 ms.
 
 ### Security and Verification
-Changing the hash of one entry would necessitate changing all subsequent entries, as each hash is dependent on the previous one. Rewriting history means redoing every hash after the change, which takes as long as it did the first time, so a forged chain can never catch up with the real one.
+Changing the hash of one entry would necessitate changing all subsequent entries, as each hash is dependent on the previous one. This characteristic makes PoH extremely resistant to tampering.
 
 The PoH chain can only be created sequentially, but it can be verified concurrently. This means that while generating a new valid chain requires following the sequence strictly, verifying the chain can be done in parallel, significantly speeding up the process:
 
@@ -42,7 +42,7 @@ pub struct Poh {
 }
 ```
 
-`Poh::new()` initializes the PoH state with a given initial hash and the number of hashes between ticks. With `None` instead of a number, `Poh` runs in low-power mode, where every `tick()` makes a tick. `Poh::new_with_slot_info()` also takes a tick number to start with.
+`Poh::new()` initializes the PoH state with a given initial hash and the number of hashes between ticks. `Poh::new_with_slot_info()` also takes a tick number to start with.
 
 `solana_entry::poh::PohEntry` struct represents a single PoH entry. It only stores the ‘hash distance’ between the current and previous entry and the resulting hash value of the current entry.
 
@@ -242,12 +242,10 @@ None => {
 
 ## Code in this repository
 
-The repository with this post has the same algorithm in Rust and Python:
-
-- `crates/poh-core/src/poh.rs` is a port of `solana_entry::poh::Poh`, tested with Agave's own test cases.
-- `verify_parallel()` in `crates/poh-core/src/verify.rs` is the parallel verification from the picture above: every entry is checked against the hash of the entry before it, on all cores at once, and the first bad entry is reported.
-- `poh demo` plays the part of `PohService`: one thread sends batches of transactions, another records them or ticks, and the result is verified at the end.
-- `python/solana_poh/reference.py` is the whole algorithm in plain Python.
+- `crates/poh-core/src/poh.rs` is `solana_entry::poh::Poh` ported to Rust, with Agave's tests.
+- `verify_parallel()` in `crates/poh-core/src/verify.rs` is the parallel verification from the picture above.
+- `poh demo` plays the part of `PohService`.
+- `python/solana_poh/reference.py` is the same algorithm in plain Python.
 
 ## Summary
 This blog post explains what is PoH and dives into Agave's implementation of PoH. The work of other crucial components (Bank, Leader Schedule, Slots, etc) are not explained to keep the blog simple, otherwise it becomes too complex to explain anything.
