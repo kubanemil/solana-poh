@@ -1,5 +1,5 @@
 use std::{
-    sync::mpsc::{Receiver, SyncSender, TryRecvError, sync_channel},
+    sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, TryRecvError, channel, sync_channel},
     thread::{self, ScopedJoinHandle},
     time::{Duration, Instant},
 };
@@ -16,7 +16,7 @@ pub struct Config {
     pub start: Hash,
     pub hashes_per_tick: u64,
     pub ticks_per_slot: u64,
-    pub seconds: f64,
+    pub duration: Duration,
     pub tps: f64,
 }
 
@@ -41,8 +41,12 @@ pub fn run<E>(
     thread::scope(|scope| {
         let (batch_tx, batch_rx) = sync_channel(CHANNEL_CAPACITY);
         let (entry_tx, entry_rx) = sync_channel(CHANNEL_CAPACITY);
-        let source = scope.spawn(move || transaction_source(config, &batch_tx));
-        let generator = scope.spawn(move || generate(config, &batch_rx, &entry_tx));
+        let (stop_tx, stop_rx) = channel::<()>();
+        let source = scope.spawn(move || transaction_source(config, &batch_tx, &stop_rx));
+        let generator = scope.spawn(move || {
+            generate(config, &batch_rx, &entry_tx);
+            drop(stop_tx);
+        });
 
         let mut report = Report::default();
         for entry in &entry_rx {
@@ -68,13 +72,16 @@ fn join<T>(handle: ScopedJoinHandle<'_, T>) -> T {
         .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
 }
 
-/// Stands in for the banking stage: batches of 1..=64 transactions with
-/// pseudo-random signatures, paced to `config.tps`. Returns batches and
-/// transactions sent.
-fn transaction_source(config: &Config, batches: &SyncSender<Hash>) -> (u64, u64) {
+/// Stands in for the banking stage: batches of 1..=64 pseudo-random signatures,
+/// paced to `config.tps` until `config.duration`.
+fn transaction_source(
+    config: &Config,
+    batches: &SyncSender<Hash>,
+    stop: &Receiver<()>,
+) -> (u64, u64) {
     let began = Instant::now();
     let (mut sent_batches, mut sent_txs) = (0u64, 0u64);
-    while began.elapsed().as_secs_f64() < config.seconds {
+    while began.elapsed() < config.duration {
         let seed = hash(&sent_batches.to_le_bytes());
         let len = 1 + seed.as_bytes()[0] % MAX_BATCH_TXS;
         let signatures: Vec<[u8; 64]> = (0..len).map(|i| signature(&seed, i)).collect();
@@ -84,9 +91,12 @@ fn transaction_source(config: &Config, batches: &SyncSender<Hash>) -> (u64, u64)
         }
         sent_batches += 1;
         sent_txs += u64::from(len);
-        let due = Duration::from_secs_f64(sent_txs as f64 / config.tps);
-        if let Some(wait) = due.checked_sub(began.elapsed()) {
-            thread::sleep(wait);
+        let due =
+            Duration::try_from_secs_f64(sent_txs as f64 / config.tps).unwrap_or(Duration::MAX);
+        let wait = due.min(config.duration).saturating_sub(began.elapsed());
+        // The generator drops the other end of `stop` when it quits, which ends the wait early.
+        if let Err(RecvTimeoutError::Disconnected) = stop.recv_timeout(wait) {
+            break;
         }
     }
     (sent_batches, sent_txs)
@@ -151,7 +161,7 @@ mod tests {
             start: hash(b"test"),
             hashes_per_tick: 100,
             ticks_per_slot: 4,
-            seconds: 0.05,
+            duration: Duration::from_millis(50),
             tps: 20_000.0,
         };
         let mut entries = Vec::new();
@@ -173,19 +183,44 @@ mod tests {
     }
 
     #[test]
-    fn sink_error_stops_both_threads() {
+    fn sink_error_stops_a_waiting_source() {
         let config = Config {
             start: Hash::default(),
             hashes_per_tick: 100,
             ticks_per_slot: 4,
-            seconds: 60.0,
-            tps: 1_000.0,
+            duration: Duration::from_secs(60),
+            tps: 1.0,
         };
+        let began = Instant::now();
         let mut seen = 0;
         let result = run(&config, |_| {
             seen += 1;
             if seen == 10 { Err("full") } else { Ok(()) }
         });
         assert_eq!(result.err(), Some("full"));
+        assert!(
+            began.elapsed() < Duration::from_secs(1),
+            "{:?}",
+            began.elapsed()
+        );
+    }
+
+    #[test]
+    fn source_stops_at_the_deadline_even_when_slow() {
+        let config = Config {
+            start: Hash::default(),
+            hashes_per_tick: 100,
+            ticks_per_slot: 4,
+            duration: Duration::from_millis(100),
+            tps: 1.0,
+        };
+        let began = Instant::now();
+        let report = run(&config, |_| Ok::<_, ()>(())).unwrap();
+        assert_eq!(report.batches_sent, 1);
+        assert!(
+            began.elapsed() < Duration::from_secs(1),
+            "{:?}",
+            began.elapsed()
+        );
     }
 }

@@ -93,15 +93,17 @@ the main thread writes entries to `entries.poh`, then reads the file back and ve
 channels are bounded, so a slow generator slows the source down instead of losing batches.
 
 ```
-$ ./do demo
-generated 21 slots: 1,344 ticks, 3,073 records, 42,000,000 hashes in 2.08 s (20.2 M hashes/s)
+$ ./do demo --compare
+generated 21 slots: 1,344 ticks, 3,073 records, 42,000,000 hashes in 2.09 s (20.1 M hashes/s)
 transactions: 100,015 in 3,073 batches sent, 3,073 batches recorded
 wrote 4,417 entries to entries.poh
-verified 4,417 entries (42,000,000 hashes): sequential 2.04 s (20.6 M hashes/s), parallel (4 threads) 0.59 s (71.7 M hashes/s, 3.5x)
+verified 4,417 entries (42,000,000 hashes) on 4 threads in 0.56 s (74.8 M hashes/s)
+sequential: 2.05 s (20.5 M hashes/s), 3.6x slower
 ```
 
 Unlike Agave, the generator does not wait for the wall clock, so a slot takes as long as its
-hashes do. `poh verify <file>` checks any entry file and exits non-zero on the first bad entry.
+hashes do. `poh verify <file>` checks any entry file in parallel and exits non-zero on the first
+bad entry; `--compare` also times a sequential pass.
 
 ## How it matches Agave
 
