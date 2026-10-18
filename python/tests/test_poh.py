@@ -165,17 +165,51 @@ def test_record_refuses_the_tick_hash(impl):
     assert (tick.num_hashes, tick.is_tick) == (10, True)
 
 
-def test_invalid_input():
-    with pytest.raises(ValueError, match="greater than 1"):
-        Poh(bytes(32), 1)
-    with pytest.raises(ValueError, match="greater than 1"):
-        reference.Poh(bytes(32), 1)
-    with pytest.raises(ValueError, match="32 bytes"):
-        Poh(b"short")
-    with pytest.raises(ValueError, match="32 bytes"):
-        PohEntry(1, bytes(32), b"short")
-    with pytest.raises(ValueError, match="power of two"):
-        Poh(bytes(32), 10).remaining_hashes_in_slot(3)
+BAD_CALLS = {
+    "hashes_per_tick 1": (ValueError, lambda m: m.Poh(bytes(32), 1)),
+    "hashes_per_tick 0": (ValueError, lambda m: m.Poh(bytes(32), 0)),
+    "hashes_per_tick -1": (OverflowError, lambda m: m.Poh(bytes(32), -1)),
+    "short start hash": (ValueError, lambda m: m.Poh(b"short")),
+    "str start hash": (TypeError, lambda m: m.Poh("0" * 32)),
+    "hash -1": (OverflowError, lambda m: m.Poh(bytes(32)).hash(-1)),
+    "hash 2**64": (OverflowError, lambda m: m.Poh(bytes(32)).hash(2**64)),
+    "hash 1.5": (TypeError, lambda m: m.Poh(bytes(32)).hash(1.5)),
+    "short mixin": (ValueError, lambda m: m.Poh(bytes(32), 4).record(b"short")),
+    "ticks_per_slot 0": (ValueError, lambda m: m.Poh(bytes(32), 4).remaining_hashes_in_slot(0)),
+    "entry num_hashes -1": (OverflowError, lambda m: m.PohEntry(-1, bytes(32))),
+    "entry short hash": (ValueError, lambda m: m.PohEntry(1, b"short")),
+    "entry short mixin": (ValueError, lambda m: m.PohEntry(1, bytes(32), b"short")),
+    "verify short start": (ValueError, lambda m: m.verify(b"short", [])),
+}
+
+
+@pytest.mark.parametrize("impl", IMPLEMENTATIONS, ids=["rust", "reference"])
+@pytest.mark.parametrize("name", BAD_CALLS)
+def test_bad_input_raises_the_same_error(impl, name):
+    error, call = BAD_CALLS[name]
+    with pytest.raises(error):
+        call(impl)
+
+
+@pytest.mark.parametrize("impl", IMPLEMENTATIONS, ids=["rust", "reference"])
+def test_bad_hash_count_leaves_state_alone(impl):
+    poh = impl.Poh(bytes(32), 10)
+    with pytest.raises(OverflowError):
+        poh.hash(-5)
+    assert (poh.num_hashes, poh.remaining_hashes_until_tick) == (0, 10)
+    assert poh.hash(0) is False
+
+
+@pytest.mark.parametrize("ticks_per_slot", [1, 3, 64])
+def test_remaining_hashes_in_slot(ticks_per_slot):
+    pohs = [impl.Poh(bytes(32), 10) for impl in IMPLEMENTATIONS]
+    for step in range(25):
+        values = {poh.remaining_hashes_in_slot(ticks_per_slot) for poh in pohs}
+        assert len(values) == 1
+        for poh in pohs:
+            if poh.hash(step % 7):
+                poh.tick()
+    assert Poh(bytes(32)).remaining_hashes_in_slot(64) == 2**64 - 1
 
 
 def test_entry_is_a_value():
@@ -198,6 +232,37 @@ def longest_main_thread_stall(work: Callable[[], object]) -> tuple[float, float]
         longest, last = max(longest, now - last), now
     worker.join()
     return longest, time.perf_counter() - began
+
+
+def test_concurrent_callers_wait_instead_of_failing():
+    start = bytes(32)
+    poh = Poh(start, 100_000)
+    stop = threading.Event()
+    errors = []
+
+    def keep_hashing():
+        try:
+            while not stop.is_set():
+                poh.hash(50_000)
+        except Exception as err:
+            errors.append(err)
+
+    hasher = threading.Thread(target=keep_hashing)
+    hasher.start()
+    entries = []
+    try:
+        for i in range(2_000):
+            mixin = sha256(i.to_bytes(4, "little")).digest()
+            while (entry := poh.record(mixin)) is None:
+                entries.append(poh.tick())
+            entries.append(entry)
+            assert len(poh.current_hash) == 32
+    finally:
+        stop.set()
+        hasher.join()
+    assert errors == []
+    solana_poh.verify(start, entries)
+    assert reference.hash_n(entries[-1].hash, poh.num_hashes) == poh.current_hash
 
 
 def test_hashing_and_verifying_release_the_gil():

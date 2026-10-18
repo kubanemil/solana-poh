@@ -1,5 +1,7 @@
+use std::sync::{Mutex, MutexGuard, PoisonError};
+
 use poh_core::{Hash, PohEntry, VerifyError};
-use pyo3::{exceptions::PyValueError, prelude::*, types::PyBytes};
+use pyo3::{exceptions::PyValueError, prelude::*, sync::MutexExt, types::PyBytes};
 
 fn to_hash(bytes: &[u8]) -> PyResult<Hash> {
     Hash::try_from(bytes).map_err(|err| PyValueError::new_err(err.to_string()))
@@ -65,9 +67,19 @@ impl PyPohEntry {
     }
 }
 
-#[pyclass(module = "solana_poh", name = "Poh")]
+// Frozen with a Mutex, not PyO3's borrow flag: `hash` runs without the GIL, and
+// another thread calling `record` or `tick` meanwhile should wait, not raise.
+#[pyclass(module = "solana_poh", name = "Poh", frozen)]
 #[derive(Debug)]
-struct PyPoh(poh_core::Poh);
+struct PyPoh(Mutex<poh_core::Poh>);
+
+impl PyPoh {
+    fn lock(&self, py: Python<'_>) -> MutexGuard<'_, poh_core::Poh> {
+        self.0
+            .lock_py_attached(py)
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+}
 
 #[pymethods]
 impl PyPoh {
@@ -79,65 +91,66 @@ impl PyPoh {
                 "hashes_per_tick must be greater than 1",
             ));
         }
-        Ok(Self(poh_core::Poh::new(
-            to_hash(start_hash)?,
-            hashes_per_tick,
-        )))
+        let poh = poh_core::Poh::new(to_hash(start_hash)?, hashes_per_tick);
+        Ok(Self(Mutex::new(poh)))
     }
 
-    fn hash(&mut self, py: Python<'_>, max_num_hashes: u64) -> bool {
-        let poh = &mut self.0;
-        py.detach(|| poh.hash(max_num_hashes))
+    fn hash(&self, py: Python<'_>, max_num_hashes: u64) -> bool {
+        py.detach(|| {
+            let mut poh = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+            poh.hash(max_num_hashes)
+        })
     }
 
-    fn record(&mut self, mixin: &[u8]) -> PyResult<Option<PyPohEntry>> {
-        Ok(self.0.record(to_hash(mixin)?).map(PyPohEntry))
+    fn record(&self, py: Python<'_>, mixin: &[u8]) -> PyResult<Option<PyPohEntry>> {
+        let mixin = to_hash(mixin)?;
+        Ok(self.lock(py).record(mixin).map(PyPohEntry))
     }
 
-    fn tick(&mut self) -> Option<PyPohEntry> {
-        self.0.tick().map(PyPohEntry)
+    fn tick(&self, py: Python<'_>) -> Option<PyPohEntry> {
+        self.lock(py).tick().map(PyPohEntry)
     }
 
-    fn remaining_hashes_in_slot(&self, ticks_per_slot: u64) -> PyResult<u64> {
-        if !ticks_per_slot.is_power_of_two() {
-            return Err(PyValueError::new_err(
-                "ticks_per_slot must be a power of two",
-            ));
+    fn remaining_hashes_in_slot(&self, py: Python<'_>, ticks_per_slot: u64) -> PyResult<u64> {
+        if ticks_per_slot == 0 {
+            return Err(PyValueError::new_err("ticks_per_slot must be positive"));
         }
-        Ok(self.0.remaining_hashes_in_slot(ticks_per_slot))
+        Ok(self.lock(py).remaining_hashes_in_slot(ticks_per_slot))
     }
 
     #[getter]
     fn current_hash<'py>(&self, py: Python<'py>) -> Bound<'py, PyBytes> {
-        to_bytes(py, &self.0.current_hash())
+        let hash = self.lock(py).current_hash();
+        to_bytes(py, &hash)
     }
 
     #[getter]
-    fn num_hashes(&self) -> u64 {
-        self.0.num_hashes()
+    fn num_hashes(&self, py: Python<'_>) -> u64 {
+        self.lock(py).num_hashes()
     }
 
     #[getter]
-    fn hashes_per_tick(&self) -> Option<u64> {
-        self.0.hashes_per_tick()
+    fn hashes_per_tick(&self, py: Python<'_>) -> Option<u64> {
+        self.lock(py).hashes_per_tick()
     }
 
     #[getter]
-    fn remaining_hashes_until_tick(&self) -> u64 {
-        self.0.remaining_hashes_until_tick()
+    fn remaining_hashes_until_tick(&self, py: Python<'_>) -> u64 {
+        self.lock(py).remaining_hashes_until_tick()
     }
 
     #[getter]
-    fn tick_number(&self) -> u64 {
-        self.0.tick_number()
+    fn tick_number(&self, py: Python<'_>) -> u64 {
+        self.lock(py).tick_number()
     }
 
-    fn __repr__(&self) -> String {
+    fn __repr__(&self, py: Python<'_>) -> String {
+        let poh = self.lock(py);
         format!(
             "Poh(current_hash='{}', num_hashes={}, remaining_hashes_until_tick={})",
-            self.0.current_hash(),
-            self.0.num_hashes(),
-            self.0.remaining_hashes_until_tick()
+            poh.current_hash(),
+            poh.num_hashes(),
+            poh.remaining_hashes_until_tick()
         )
     }
 }
@@ -178,8 +191,13 @@ fn verify_tick_hash_count(
 }
 
 #[pyfunction]
-fn hash_signatures<'py>(py: Python<'py>, signatures: Vec<Vec<u8>>) -> Bound<'py, PyBytes> {
-    to_bytes(py, &poh_core::hash_signatures(&signatures))
+fn hash_signatures<'py>(
+    py: Python<'py>,
+    signatures: Vec<Bound<'py, PyBytes>>,
+) -> Bound<'py, PyBytes> {
+    let signatures: Vec<&[u8]> = signatures.iter().map(|s| s.as_bytes()).collect();
+    let root = py.detach(|| poh_core::hash_signatures(&signatures));
+    to_bytes(py, &root)
 }
 
 #[pymodule]

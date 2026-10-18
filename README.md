@@ -83,7 +83,8 @@ except VerifyError as err:
     print(err.index, err)  # 0 entry 0: hash does not follow from the previous entry (...)
 ```
 
-Hashing and verification release the GIL, so other Python threads keep running.
+Hashing and verification release the GIL, so other Python threads keep running. A `Poh` can be
+shared between threads, like Agave's: a `record()` that arrives mid-`hash()` waits for it.
 `solana_poh.reference` has the same `Poh`, `PohEntry` and `verify` in plain Python.
 
 The demo replaces the Kafka setup this repo used to have. A source thread sends batches of
