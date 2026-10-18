@@ -1,2 +1,0 @@
-pymerkle
-kafka-python
