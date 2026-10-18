@@ -1,8 +1,6 @@
 """Proof of History in plain Python, step for step the same as the Rust core.
 
-It runs about 12x slower than `solana_poh.Poh`, but the whole algorithm fits on
-one screen. The tests use it as a second implementation, and the benchmark as
-the baseline.
+The tests use it as a second implementation and the benchmark as the baseline.
 """
 
 from __future__ import annotations
