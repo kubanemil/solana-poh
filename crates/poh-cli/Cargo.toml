@@ -1,0 +1,19 @@
+[package]
+name = "poh-cli"
+description = "Command-line demo and verifier for poh-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "poh"
+path = "src/main.rs"
+
+[dependencies]
+poh-core.workspace = true
+rayon.workspace = true
+lexopt.workspace = true
+
+[lints]
+workspace = true
