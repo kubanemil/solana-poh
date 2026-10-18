@@ -3,8 +3,6 @@ use crate::hash::{Hash, hash, hash_n, hashv};
 // Agave's sentinel for `hashes_per_tick: None`: every `tick()` closes a tick.
 const LOW_POWER_MODE: u64 = u64::MAX;
 
-/// A point in the hash chain: `hash` is `num_hashes` hashes after the previous
-/// entry, and the last of those hashes mixed in `mixin` if there is one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PohEntry {
     pub num_hashes: u64,
@@ -18,8 +16,7 @@ impl PohEntry {
     }
 }
 
-/// The Proof-of-History generator, with the same state machine as Agave's
-/// `solana_entry::poh::Poh`.
+/// The state machine of Agave's `solana_entry::poh::Poh`.
 #[derive(Debug, Clone)]
 pub struct Poh {
     hash: Hash,
@@ -40,9 +37,6 @@ impl Poh {
         Self::new_with_tick_number(hash, hashes_per_tick, 0)
     }
 
-    /// # Panics
-    ///
-    /// Same as [`Poh::new`].
     pub fn new_with_tick_number(
         hash: Hash,
         hashes_per_tick: Option<u64>,
@@ -93,7 +87,6 @@ impl Poh {
         })
     }
 
-    /// Hashes once. Returns the tick entry if that hash completed a tick.
     pub fn tick(&mut self) -> Option<PohEntry> {
         self.hash = hash(self.hash.as_ref());
         self.num_hashes += 1;
@@ -116,7 +109,6 @@ impl Poh {
         self.hash
     }
 
-    /// Hashes since the last entry.
     pub const fn num_hashes(&self) -> u64 {
         self.num_hashes
     }
@@ -138,16 +130,16 @@ impl Poh {
     }
 
     /// Hashes left until the end of the current slot, counting the current tick.
+    /// Saturates where Agave's wrapping arithmetic would overflow (low-power mode).
     ///
     /// # Panics
     ///
-    /// In debug builds, if `ticks_per_slot` is not a power of two (Agave uses a bitmask).
+    /// If `ticks_per_slot` is 0.
     pub fn remaining_hashes_in_slot(&self, ticks_per_slot: u64) -> u64 {
-        debug_assert!(ticks_per_slot.is_power_of_two());
         ticks_per_slot
-            .saturating_sub((self.tick_number & ticks_per_slot.wrapping_sub(1)).wrapping_add(1))
-            .wrapping_mul(self.hashes_per_tick)
-            .wrapping_add(self.remaining_hashes_until_tick)
+            .saturating_sub(self.tick_number % ticks_per_slot + 1)
+            .saturating_mul(self.hashes_per_tick)
+            .saturating_add(self.remaining_hashes_until_tick)
     }
 }
 
@@ -259,6 +251,32 @@ mod tests {
         assert_eq!(poh.record(Hash::default()).map(|e| e.num_hashes), Some(1));
         assert_eq!(poh.remaining_hashes_until_tick(), 9);
         assert_eq!(poh.remaining_hashes_in_slot(2), 9);
+    }
+
+    #[test]
+    fn remaining_hashes_in_slot_for_any_ticks_per_slot() {
+        let mut poh = Poh::new(Hash::default(), Some(10));
+        assert_eq!(poh.remaining_hashes_in_slot(3), 30);
+        poh.hash(4);
+        assert_eq!(poh.remaining_hashes_in_slot(3), 26);
+        poh.hash(u64::MAX);
+        poh.tick();
+        assert_eq!(poh.remaining_hashes_in_slot(3), 20);
+        for _ in 0..2 {
+            poh.hash(u64::MAX);
+            poh.tick();
+        }
+        assert_eq!(poh.tick_number(), 3);
+        assert_eq!(poh.remaining_hashes_in_slot(3), 30);
+    }
+
+    #[test]
+    fn remaining_hashes_in_slot_saturates_in_low_power_mode() {
+        let mut poh = Poh::new(Hash::default(), None);
+        assert_eq!(poh.remaining_hashes_in_slot(64), u64::MAX);
+        poh.hash(10);
+        assert_eq!(poh.remaining_hashes_in_slot(64), u64::MAX);
+        assert_eq!(poh.remaining_hashes_in_slot(1), u64::MAX - 10);
     }
 
     #[test]

@@ -121,10 +121,8 @@ const SHA256_IV: [u32; 8] = [
     0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
 ];
 
-/// Applies [`hash`] `n` times, starting from `start`.
-///
-/// A 32-byte message plus SHA-256 padding fits in one 64-byte block, so each
-/// step is a single compression with the padding written once up front.
+// A 32-byte message plus SHA-256 padding is one 64-byte block, so each hash is
+// a single compression with the padding written once up front.
 pub fn hash_n(start: &Hash, n: u64) -> Hash {
     let mut block = [0u8; 64];
     block[..HASH_BYTES].copy_from_slice(&start.0);
