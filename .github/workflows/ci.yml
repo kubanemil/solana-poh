@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - uses: astral-sh/setup-uv@v10.3.0
+      - run: ./do check
+      - run: cargo test --workspace --exclude poh-py --locked
+      - run: ./do demo --seconds 1
+
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: astral-sh/setup-uv@v10.3.0
+      - run: uv sync --locked --no-install-project
+      - name: Build the wheel
+        run: uv run --no-sync maturin build --release --locked --out dist
+      - name: Test the installed wheel
+        run: |
+          uv pip install dist/*.whl
+          uv run --no-sync pytest -q

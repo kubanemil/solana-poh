@@ -1,0 +1,23 @@
+[package]
+name = "poh-core"
+description = "Solana-compatible Proof-of-History generator and verifier"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+sha2.workspace = true
+rayon.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+serde_json.workspace = true
+criterion.workspace = true
+
+[[bench]]
+name = "poh"
+harness = false
+
+[lints]
+workspace = true
