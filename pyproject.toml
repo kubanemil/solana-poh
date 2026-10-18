@@ -5,7 +5,7 @@ build-backend = "maturin"
 [project]
 name = "solana-poh"
 version = "0.1.0"
-description = "Solana Proof of History: a fast Rust generator and verifier with Python bindings"
+description = "Solana Proof of History generator and verifier in Rust, with Python bindings"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
