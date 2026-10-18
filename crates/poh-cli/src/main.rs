@@ -8,7 +8,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use poh_core::{hash, verify, verify_parallel, verify_tick_hash_counts};
+use poh_core::{hash, verify, verify_parallel, verify_tick_hash_count};
 
 use crate::ledger::{Ledger, LedgerWriter};
 
@@ -164,7 +164,7 @@ fn verify_file(path: &Path) -> Result<()> {
     let sequential = timed(|| verify(&start, &entries))?;
     let parallel = timed(|| verify_parallel(&start, &entries))?;
     if let Some(hashes_per_tick) = hashes_per_tick {
-        verify_tick_hash_counts(&entries, hashes_per_tick)?;
+        verify_tick_hash_count(&entries, &mut 0, hashes_per_tick)?;
     }
     println!(
         "verified {} entries ({} hashes): sequential {} ({}/s), parallel ({} threads) {} ({}/s, {:.1}x)",

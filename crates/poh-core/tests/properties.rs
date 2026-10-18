@@ -2,7 +2,7 @@
 
 use poh_core::{
     Hash, Poh, PohEntry, VerifyErrorKind, hash, hash_n, verify, verify_parallel,
-    verify_tick_hash_counts,
+    verify_tick_hash_count,
 };
 use proptest::{prelude::*, sample::Index};
 
@@ -99,11 +99,18 @@ fn generated() -> impl Strategy<Value = (Hash, u64, Vec<Op>)> {
 
 proptest! {
     #[test]
-    fn generated_entries_verify((start, hashes_per_tick, ops) in generated()) {
+    fn generated_entries_verify((start, hashes_per_tick, ops) in generated(), split in any::<Index>()) {
         let Run { poh, entries } = run(start, hashes_per_tick, &ops);
         prop_assert_eq!(verify(&start, &entries), Ok(()));
         prop_assert_eq!(verify_parallel(&start, &entries), Ok(()));
-        prop_assert_eq!(verify_tick_hash_counts(&entries, hashes_per_tick), Ok(()));
+
+        let (head, tail) = entries.split_at(split.index(entries.len() + 1));
+        let mut tick_hash_count = 0;
+        prop_assert_eq!(verify_tick_hash_count(head, &mut tick_hash_count, hashes_per_tick), Ok(()));
+        prop_assert_eq!(verify_tick_hash_count(tail, &mut tick_hash_count, hashes_per_tick), Ok(()));
+        let since_tick = hashes_per_tick - poh.remaining_hashes_until_tick() - poh.num_hashes();
+        prop_assert_eq!(tick_hash_count, since_tick);
+
         let last = entries.last().map_or(start, |e| e.hash);
         prop_assert_eq!(hash_n(&last, poh.num_hashes()), poh.current_hash());
     }

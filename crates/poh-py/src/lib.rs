@@ -165,13 +165,16 @@ fn verify_parallel(
 }
 
 #[pyfunction]
-fn verify_tick_hash_counts(
+#[pyo3(signature = (entries, hashes_per_tick, tick_hash_count = 0))]
+fn verify_tick_hash_count(
     py: Python<'_>,
     entries: Vec<Bound<'_, PyPohEntry>>,
     hashes_per_tick: u64,
-) -> PyResult<()> {
-    poh_core::verify_tick_hash_counts(&collect(&entries), hashes_per_tick)
-        .map_err(|err| verify_error(py, err))
+    mut tick_hash_count: u64,
+) -> PyResult<u64> {
+    poh_core::verify_tick_hash_count(&collect(&entries), &mut tick_hash_count, hashes_per_tick)
+        .map_err(|err| verify_error(py, err))?;
+    Ok(tick_hash_count)
 }
 
 #[pyfunction]
@@ -185,7 +188,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyPohEntry>()?;
     m.add_function(wrap_pyfunction!(verify, m)?)?;
     m.add_function(wrap_pyfunction!(verify_parallel, m)?)?;
-    m.add_function(wrap_pyfunction!(verify_tick_hash_counts, m)?)?;
+    m.add_function(wrap_pyfunction!(verify_tick_hash_count, m)?)?;
     m.add_function(wrap_pyfunction!(hash_signatures, m)?)?;
     Ok(())
 }

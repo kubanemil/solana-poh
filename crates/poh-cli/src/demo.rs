@@ -143,7 +143,7 @@ fn record(poh: &mut Poh, mixin: Hash, send: impl Fn(PohEntry) -> bool) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use poh_core::{verify, verify_tick_hash_counts};
+    use poh_core::{verify, verify_tick_hash_count};
 
     #[test]
     fn records_every_batch_and_ends_on_a_slot_boundary() {
@@ -167,7 +167,7 @@ mod tests {
         assert_eq!(report.hashes, report.ticks * config.hashes_per_tick);
         assert_eq!(verify(&config.start, &entries), Ok(()));
         assert_eq!(
-            verify_tick_hash_counts(&entries, config.hashes_per_tick),
+            verify_tick_hash_count(&entries, &mut 0, config.hashes_per_tick),
             Ok(())
         );
     }

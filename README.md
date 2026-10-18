@@ -109,7 +109,8 @@ hashes do. `poh verify <file>` checks any entry file and exits non-zero on the f
 including low-power mode and `remaining_hashes_in_slot`: `hash()` stops one hash short of the
 tick, `record()` refuses that last hash, and `tick()` closes the tick. Its unit tests are ported,
 as are the verification and tick-count tests from `entry/src/entry.rs` and the Merkle tests from
-`merkle-tree`.
+`merkle-tree`. `verify_tick_hash_count` accepts and rejects exactly what Agave's does, including
+the count carried between slices of a slot.
 
 `vectors/poh.json` comes from `scripts/gen_vectors.py`, which computes expected hashes with a
 plain `hashlib` loop and never touches `Poh`. It holds Agave's own test case, a hand-laid
@@ -165,7 +166,7 @@ goes to the interpreter loop around each call.
 ```
 crates/poh-core/          the library
   src/poh.rs              Poh and PohEntry, ported from Agave's entry/src/poh.rs
-  src/verify.rs           verify, verify_parallel, verify_tick_hash_counts
+  src/verify.rs           verify, verify_parallel, verify_tick_hash_count
   src/hash.rs             Hash, SHA-256 helpers, the one-block hash loop
   src/merkle.rs           hash_signatures, Agave's Merkle root of signatures
   tests/                  vector and property tests

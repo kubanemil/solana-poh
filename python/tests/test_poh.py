@@ -77,7 +77,9 @@ def test_rust_matches_reference(hashes_per_tick, seed):
     ref_entries, ref_states = drive(reference, start, hashes_per_tick, seed)
     assert [as_tuple(e) for e in rust_entries] == [as_tuple(e) for e in ref_entries]
     assert rust_states == ref_states
-    solana_poh.verify_tick_hash_counts(rust_entries, hashes_per_tick)
+    assert solana_poh.verify_tick_hash_count(rust_entries, hashes_per_tick) == sum(
+        e.num_hashes for e in rust_entries[last_tick(rust_entries) + 1 :]
+    )
 
 
 def tampered_variants(entry: PohEntry) -> list[PohEntry]:
@@ -111,13 +113,38 @@ def test_tampering_fails_at_that_entry(seed):
             assert errors == [(index, errors[0][1])] * 3
 
 
-def test_tick_hash_counts():
+def last_tick(entries) -> int:
+    return max((i for i, e in enumerate(entries) if e.is_tick), default=-1)
+
+
+def test_tick_hash_count():
     entries, _ = drive(solana_poh, bytes(32), 8, seed=1)
-    ticks = [i for i, e in enumerate(entries) if e.is_tick]
-    solana_poh.verify_tick_hash_counts(entries, 8)
+    first_tick = next(i for i, e in enumerate(entries) if e.is_tick)
     with pytest.raises(VerifyError) as caught:
-        solana_poh.verify_tick_hash_counts(entries, 9)
-    assert caught.value.index == ticks[0]
+        solana_poh.verify_tick_hash_count(entries, 9)
+    assert caught.value.index == first_tick
+
+    middle = len(entries) // 2
+    carried = solana_poh.verify_tick_hash_count(entries[:middle], 8)
+    assert solana_poh.verify_tick_hash_count(entries[middle:], 8, carried) == (
+        solana_poh.verify_tick_hash_count(entries, 8)
+    )
+
+
+def test_tick_hash_count_follows_agave():
+    zero = bytes(32)
+    full_mixin, no_hash_tick = PohEntry(10, zero, zero), PohEntry(0, zero)
+    assert solana_poh.verify_tick_hash_count([PohEntry(0, zero, zero), PohEntry(10, zero)], 10) == 0
+    with pytest.raises(VerifyError, match="tick has num_hashes = 0"):
+        solana_poh.verify_tick_hash_count([full_mixin, no_hash_tick], 10)
+    with pytest.raises(VerifyError, match="without a tick"):
+        solana_poh.verify_tick_hash_count([full_mixin], 10)
+
+
+def test_zero_hashes_per_tick_disables_the_tick_check():
+    zero = bytes(32)
+    uneven = [PohEntry(3, zero), PohEntry(0, zero), PohEntry(2**64 - 1, zero, zero)]
+    assert solana_poh.verify_tick_hash_count(uneven, 0, 5) == 5
 
 
 @pytest.mark.parametrize("case", VECTORS["hash_signatures"], ids=lambda c: str(len(c["leaves"])))

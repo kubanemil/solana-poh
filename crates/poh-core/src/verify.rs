@@ -9,22 +9,24 @@ use crate::{
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct VerifyError {
-    /// Index of the first entry that failed.
     pub index: usize,
     pub kind: VerifyErrorKind,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VerifyErrorKind {
-    /// The entry's hash is not what its `num_hashes` and mixin produce from the previous hash.
-    HashMismatch { computed: Hash },
-    /// A mixin entry with `num_hashes == 0`. `Poh::record` always spends one hash.
+    HashMismatch {
+        computed: Hash,
+    },
+    /// Agave hashes this like `num_hashes == 1`; we reject it because `Poh::record`
+    /// never produces it and accepting it lets `num_hashes` change without the hash changing.
     ZeroHashMixin,
-    /// A tick with `num_hashes == 0`.
     ZeroHashTick,
-    /// A tick that does not close exactly `hashes_per_tick` hashes.
-    TickHashCount { expected: u64, actual: u64 },
-    /// A mixin entry that takes the last hash of a tick, which `Poh::record` refuses.
+    TickHashCount {
+        expected: u64,
+        actual: u64,
+    },
+    /// The slice ends with `hashes_per_tick` or more hashes since the last tick.
     MissedTick,
 }
 
@@ -48,15 +50,14 @@ impl fmt::Display for VerifyErrorKind {
             Self::TickHashCount { expected, actual } => {
                 write!(f, "tick closes {actual} hashes, expected {expected}")
             }
-            Self::MissedTick => f.write_str("mixin entry takes the hash reserved for a tick"),
+            Self::MissedTick => f.write_str("a tick's worth of hashes without a tick"),
         }
     }
 }
 
 impl std::error::Error for VerifyError {}
 
-/// The hash an entry with `num_hashes` and `mixin` must carry after `prev`,
-/// as Agave's `next_hash` computes it.
+/// Agave's `next_hash`, with a mixin in place of the transactions.
 pub fn next_hash(prev: &Hash, num_hashes: u64, mixin: Option<&Hash>) -> Hash {
     match mixin {
         None => hash_n(prev, num_hashes),
@@ -67,7 +68,6 @@ pub fn next_hash(prev: &Hash, num_hashes: u64, mixin: Option<&Hash>) -> Hash {
     }
 }
 
-/// Builds the entry `num_hashes` hashes after `prev`.
 pub fn next_entry(prev: &Hash, num_hashes: u64, mixin: Option<Hash>) -> PohEntry {
     PohEntry {
         num_hashes,
@@ -88,7 +88,6 @@ fn check_entry(prev: &Hash, entry: &PohEntry) -> Result<(), VerifyErrorKind> {
     }
 }
 
-/// Checks that `entries` continue the hash chain from `start`, one entry after another.
 pub fn verify(start: &Hash, entries: &[PohEntry]) -> Result<(), VerifyError> {
     let mut prev = start;
     for (index, entry) in entries.iter().enumerate() {
@@ -98,10 +97,8 @@ pub fn verify(start: &Hash, entries: &[PohEntry]) -> Result<(), VerifyError> {
     Ok(())
 }
 
-/// Same result as [`verify`], with entries checked in parallel on the current rayon pool.
-///
-/// Each entry only needs the previous entry's hash, so the work splits at entry
-/// boundaries, as in Agave's `EntrySlice::verify`.
+/// Same result as [`verify`], on the current rayon pool. Each entry only needs the
+/// previous entry's hash, so work splits at entry boundaries, as in Agave's `EntrySlice::verify`.
 pub fn verify_parallel(start: &Hash, entries: &[PohEntry]) -> Result<(), VerifyError> {
     let failure = (0..entries.len()).into_par_iter().find_map_first(|index| {
         let prev = match index {
@@ -115,32 +112,49 @@ pub fn verify_parallel(start: &Hash, entries: &[PohEntry]) -> Result<(), VerifyE
     failure.map_or(Ok(()), Err)
 }
 
-/// Checks that every tick closes exactly `hashes_per_tick` hashes, like Agave's
-/// `verify_tick_hash_count`. The sequence may end partway through a tick.
-pub fn verify_tick_hash_counts(
+/// Agave's `verify_tick_hash_count`, accepting and rejecting the same slices.
+/// `tick_hash_count` carries hashes since the last tick across slices, and
+/// `hashes_per_tick == 0` disables the check. A `MissedTick` error points at the
+/// entry that reached a tick's worth of hashes, or `entries.len()` if the count
+/// was already there.
+pub fn verify_tick_hash_count(
     entries: &[PohEntry],
+    tick_hash_count: &mut u64,
     hashes_per_tick: u64,
 ) -> Result<(), VerifyError> {
-    let mut count: u64 = 0;
+    if hashes_per_tick == 0 {
+        return Ok(());
+    }
+    let mut reached = None;
     for (index, entry) in entries.iter().enumerate() {
-        let fail = |kind| Err(VerifyError { index, kind });
-        count = count.saturating_add(entry.num_hashes);
+        *tick_hash_count = tick_hash_count.saturating_add(entry.num_hashes);
         if entry.is_tick() {
-            if entry.num_hashes == 0 {
-                return fail(VerifyErrorKind::ZeroHashTick);
-            }
-            if count != hashes_per_tick {
-                return fail(VerifyErrorKind::TickHashCount {
+            let kind = if entry.num_hashes == 0 {
+                VerifyErrorKind::ZeroHashTick
+            } else if *tick_hash_count != hashes_per_tick {
+                VerifyErrorKind::TickHashCount {
                     expected: hashes_per_tick,
-                    actual: count,
-                });
-            }
-            count = 0;
-        } else if count >= hashes_per_tick {
-            return fail(VerifyErrorKind::MissedTick);
+                    actual: *tick_hash_count,
+                }
+            } else {
+                *tick_hash_count = 0;
+                reached = None;
+                continue;
+            };
+            return Err(VerifyError { index, kind });
+        }
+        if reached.is_none() && *tick_hash_count >= hashes_per_tick {
+            reached = Some(index);
         }
     }
-    Ok(())
+    if *tick_hash_count < hashes_per_tick {
+        Ok(())
+    } else {
+        Err(VerifyError {
+            index: reached.unwrap_or(entries.len()),
+            kind: VerifyErrorKind::MissedTick,
+        })
+    }
 }
 
 #[cfg(test)]
@@ -282,52 +296,103 @@ mod tests {
     }
 
     #[test]
-    fn verify_tick_hash_count() {
+    fn verify_tick_hash_count_matches_agave() {
+        // Line for line from Agave's test_verify_tick_hash_count.
         let hashes_per_tick = 10;
-        let check = |entries: &[PohEntry], hashes_per_tick| {
-            verify_tick_hash_counts(entries, hashes_per_tick).map_err(|e| (e.index, e.kind))
+        let no_hash_tx_entry = mixin_entry(0);
+        let single_hash_tx_entry = mixin_entry(1);
+        let partial_tx_entry = mixin_entry(hashes_per_tick - 1);
+        let full_tx_entry = mixin_entry(hashes_per_tick);
+        let max_hash_tx_entry = mixin_entry(u64::MAX);
+        let no_hash_tick_entry = tick(0, Hash::default());
+        let single_hash_tick_entry = tick(1, Hash::default());
+        let partial_tick_entry = tick(hashes_per_tick - 1, Hash::default());
+        let full_tick_entry = tick(hashes_per_tick, Hash::default());
+        let max_hash_tick_entry = tick(u64::MAX, Hash::default());
+        let check = |entries: &[PohEntry], count: &mut u64, hashes_per_tick| {
+            verify_tick_hash_count(entries, count, hashes_per_tick).is_ok()
         };
-        let full_tick = tick(hashes_per_tick, Hash::default());
 
-        assert_eq!(check(&[], hashes_per_tick), Ok(()));
+        let mut tick_hash_count = 0;
+        let mut entries: Vec<PohEntry> = vec![];
+        assert!(check(&entries, &mut tick_hash_count, hashes_per_tick));
+        assert_eq!(tick_hash_count, 0);
+
+        tick_hash_count = hashes_per_tick;
+        assert!(!check(&entries, &mut tick_hash_count, hashes_per_tick));
+        assert_eq!(tick_hash_count, hashes_per_tick);
+        tick_hash_count = 0;
+
+        entries = vec![max_hash_tx_entry];
+        assert!(check(&entries, &mut tick_hash_count, 0));
+        assert_eq!(tick_hash_count, 0);
+
+        entries = vec![partial_tick_entry];
+        assert!(!check(&entries, &mut tick_hash_count, hashes_per_tick));
+        assert_eq!(tick_hash_count, hashes_per_tick - 1);
+        tick_hash_count = 0;
+
+        entries = vec![no_hash_tx_entry, full_tick_entry];
+        assert!(check(&entries, &mut tick_hash_count, hashes_per_tick));
+        assert_eq!(tick_hash_count, 0);
+
+        assert!(!check(&entries, &mut tick_hash_count, hashes_per_tick - 1));
+        assert_eq!(tick_hash_count, hashes_per_tick);
+        tick_hash_count = 0;
+
+        entries = vec![partial_tx_entry];
+        assert!(check(&entries, &mut tick_hash_count, hashes_per_tick));
+        assert_eq!(tick_hash_count, hashes_per_tick - 1);
+        tick_hash_count = 0;
+
+        entries = vec![no_hash_tick_entry];
+        assert!(!check(&entries, &mut tick_hash_count, hashes_per_tick));
+        assert_eq!(tick_hash_count, 0);
+
+        entries = vec![full_tx_entry, no_hash_tick_entry];
+        assert!(!check(&entries, &mut tick_hash_count, hashes_per_tick));
+        assert_eq!(tick_hash_count, hashes_per_tick);
+        tick_hash_count = 0;
+
+        entries = vec![full_tx_entry, single_hash_tick_entry];
+        assert!(!check(&entries, &mut tick_hash_count, hashes_per_tick));
+        assert_eq!(tick_hash_count, hashes_per_tick + 1);
+        tick_hash_count = 0;
+
+        entries = vec![full_tx_entry];
+        assert!(!check(&entries, &mut tick_hash_count, hashes_per_tick));
+        assert_eq!(tick_hash_count, hashes_per_tick);
+        tick_hash_count = 0;
+
+        entries = vec![single_hash_tx_entry, partial_tick_entry];
+        assert!(check(&entries, &mut tick_hash_count, hashes_per_tick));
+        assert_eq!(tick_hash_count, 0);
+
+        let tx_entries = vec![single_hash_tx_entry; hashes_per_tick as usize - 1];
+        entries = [tx_entries, vec![single_hash_tick_entry]].concat();
+        assert!(check(&entries, &mut tick_hash_count, hashes_per_tick));
+        assert_eq!(tick_hash_count, 0);
+
+        entries = vec![full_tick_entry, max_hash_tick_entry];
+        assert!(!check(&entries, &mut tick_hash_count, hashes_per_tick));
+        assert_eq!(tick_hash_count, u64::MAX);
+        tick_hash_count = 0;
+
+        entries = vec![max_hash_tx_entry, full_tick_entry];
+        assert!(!check(&entries, &mut tick_hash_count, hashes_per_tick));
+        assert_eq!(tick_hash_count, u64::MAX);
+    }
+
+    #[test]
+    fn tick_hash_count_errors_point_at_the_entry() {
+        let check = |entries: &[PohEntry]| {
+            verify_tick_hash_count(entries, &mut 0, 10).map_err(|e| (e.index, e.kind))
+        };
+        let full_tick = tick(10, Hash::default());
         assert_eq!(
-            check(
-                &[tick(hashes_per_tick - 1, Hash::default())],
-                hashes_per_tick
-            ),
+            check(&[full_tick, mixin_entry(9), tick(2, Hash::default())]),
             Err((
-                0,
-                VerifyErrorKind::TickHashCount {
-                    expected: 10,
-                    actual: 9
-                }
-            ))
-        );
-        assert_eq!(check(&[mixin_entry(0), full_tick], hashes_per_tick), Ok(()));
-        assert!(check(&[mixin_entry(0), full_tick], hashes_per_tick - 1).is_err());
-        assert_eq!(
-            check(&[mixin_entry(hashes_per_tick - 1)], hashes_per_tick),
-            Ok(())
-        );
-        assert_eq!(
-            check(&[tick(0, Hash::default())], hashes_per_tick),
-            Err((0, VerifyErrorKind::ZeroHashTick))
-        );
-        assert_eq!(
-            check(
-                &[mixin_entry(hashes_per_tick), tick(0, Hash::default())],
-                hashes_per_tick
-            ),
-            Err((0, VerifyErrorKind::MissedTick))
-        );
-        assert_eq!(
-            check(&[mixin_entry(hashes_per_tick)], hashes_per_tick),
-            Err((0, VerifyErrorKind::MissedTick))
-        );
-        assert_eq!(
-            check(&[mixin_entry(9), tick(2, Hash::default())], hashes_per_tick),
-            Err((
-                1,
+                2,
                 VerifyErrorKind::TickHashCount {
                     expected: 10,
                     actual: 11
@@ -335,28 +400,24 @@ mod tests {
             ))
         );
         assert_eq!(
-            check(&[mixin_entry(1), tick(9, Hash::default())], hashes_per_tick),
-            Ok(())
-        );
-        let mut many = vec![mixin_entry(1); 9];
-        many.push(tick(1, Hash::default()));
-        assert_eq!(check(&many, hashes_per_tick), Ok(()));
-        assert_eq!(
-            check(
-                &[full_tick, tick(u64::MAX, Hash::default())],
-                hashes_per_tick
-            ),
-            Err((
-                1,
-                VerifyErrorKind::TickHashCount {
-                    expected: 10,
-                    actual: u64::MAX
-                }
-            ))
+            check(&[full_tick, tick(0, Hash::default())]),
+            Err((1, VerifyErrorKind::ZeroHashTick))
         );
         assert_eq!(
-            check(&[mixin_entry(u64::MAX), full_tick], hashes_per_tick),
+            check(&[full_tick, mixin_entry(4), mixin_entry(6), mixin_entry(1)]),
+            Err((2, VerifyErrorKind::MissedTick))
+        );
+        assert_eq!(
+            verify_tick_hash_count(&[], &mut 10, 10).map_err(|e| (e.index, e.kind)),
             Err((0, VerifyErrorKind::MissedTick))
         );
+    }
+
+    #[test]
+    fn zero_hashes_per_tick_disables_the_check() {
+        let entries = [tick(0, Hash::default()), mixin_entry(u64::MAX)];
+        let mut count = 7;
+        assert_eq!(verify_tick_hash_count(&entries, &mut count, 0), Ok(()));
+        assert_eq!(count, 7);
     }
 }

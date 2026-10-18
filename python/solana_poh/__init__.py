@@ -9,7 +9,7 @@ from solana_poh._core import (
     hash_signatures,
     verify,
     verify_parallel,
-    verify_tick_hash_counts,
+    verify_tick_hash_count,
 )
 from solana_poh._errors import VerifyError
 
@@ -20,5 +20,5 @@ __all__ = [
     "hash_signatures",
     "verify",
     "verify_parallel",
-    "verify_tick_hash_counts",
+    "verify_tick_hash_count",
 ]

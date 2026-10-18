@@ -2,7 +2,7 @@
 
 use poh_core::{
     Hash, Poh, PohEntry, hash, hash_n, hash_signatures, verify, verify_parallel,
-    verify_tick_hash_counts,
+    verify_tick_hash_count,
 };
 use serde_json::Value;
 
@@ -53,7 +53,7 @@ fn sequences_verify() {
         assert_eq!(verify_parallel(&start, &entries), Ok(()), "{name}");
         if let Some(hashes_per_tick) = sequence["hashes_per_tick"].as_u64() {
             assert_eq!(
-                verify_tick_hash_counts(&entries, hashes_per_tick),
+                verify_tick_hash_count(&entries, &mut 0, hashes_per_tick),
                 Ok(()),
                 "{name}"
             );

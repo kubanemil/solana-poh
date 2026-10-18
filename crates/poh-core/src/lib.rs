@@ -28,5 +28,5 @@ pub use merkle::hash_signatures;
 pub use poh::{Poh, PohEntry};
 pub use verify::{
     VerifyError, VerifyErrorKind, next_entry, next_hash, verify, verify_parallel,
-    verify_tick_hash_counts,
+    verify_tick_hash_count,
 };
